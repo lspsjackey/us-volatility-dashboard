@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.html
+.DS_Store
+.agents/
+.ruff_cache/

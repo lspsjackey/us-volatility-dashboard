@@ -9,7 +9,7 @@ from openbb import obb
 
 st.set_page_config(page_title="⚡ 美股波動率戰情室", layout="wide", initial_sidebar_state="collapsed")
 
-# 自訂樣式：精簡按鈕尺寸與垂直置中對齊
+# 自訂樣式：精簡按鈕尺寸與垂直置中對齊，並優化指標數值自適應字體
 st.markdown("""
 <style>
     div[data-testid="stFormSubmitButton"] > button {
@@ -17,6 +17,11 @@ st.markdown("""
         font-size: 14px;
         font-weight: 600;
         border-radius: 8px;
+    }
+    /* 確保高波動率數字（如 > 100%）在卡片內不被省略號 ... 截斷 */
+    div[data-testid="stMetricValue"] {
+        font-size: clamp(1.1rem, 1.45vw, 1.65rem) !important;
+        white-space: nowrap !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -324,7 +329,11 @@ def clean_company_name(raw_name: str | None, symbol: str) -> str:
     s = re.sub(r"\bCO\s+COM\b", "Co.", s, flags=re.I)
     s = re.sub(r"\bSPONSORED\s+ADS\b", "ADR", s, flags=re.I)
     s = re.sub(r"\bSPON\s+ADR\b", "ADR", s, flags=re.I)
+    s = re.sub(r"\bOrdinary\s+Shares\b", "", s, flags=re.I)
+    s = re.sub(r"\bCommon\s+Stock\b", "", s, flags=re.I)
+    s = re.sub(r"\bClass\s+[A-Z]\b", "", s, flags=re.I)
     s = re.sub(r"\s+COM$", "", s, flags=re.I)
+    s = re.sub(r"\s+", " ", s).strip()
     words = s.split()
     cleaned = []
     acronyms = {"ADR", "ETF", "USA", "PLC", "LLC", "LP", "REIT", "AI", "TSMC"}
@@ -345,6 +354,16 @@ def format_company_header(raw_name: str | None, symbol: str) -> str:
     if clean.upper() == symbol.upper():
         return symbol
     return f"{clean}（{symbol}）"
+
+
+def format_iv_range(low: float | None, high: float | None) -> str:
+    """格式化 52 週 IV 區間，若數值達到三位數（>=100%）自動轉為無小數整數百分比，確保在卡片內不被截斷。"""
+    if low is None or high is None:
+        return "N/A"
+    l_pct, h_pct = low * 100, high * 100
+    if h_pct >= 100 or l_pct >= 100:
+        return f"{l_pct:.0f}% ~ {h_pct:.0f}%"
+    return f"{l_pct:.1f}% ~ {h_pct:.1f}%"
 
 
 # ============================================================
@@ -410,7 +429,7 @@ c3.metric(
 )
 c4.metric(
     "52週 30天 IV 區間",
-    f"{iv30_low * 100:.1f}% ~ {iv30_high * 100:.1f}%" if iv30_low and iv30_high else "N/A",
+    format_iv_range(iv30_low, iv30_high),
     help="過去一年（52 週）「30天 隱含波動率 (IV)」的最低點與最高點，與左方 30天 IV 為相同口徑，可直接比較。",
     border=True,
 )
@@ -438,6 +457,12 @@ with tab_overview:
     )
     hist_plot = hist.dropna(subset=["hv30"]).tail(CHART_DAYS)
 
+    # 動態計算波動率 Y 軸上限，確保即使當前 IV 遠高於過去歷史 HV，水平線與文字也絕不高出圖表框框
+    max_vol = float(hist_plot["hv30"].max()) if len(hist_plot["hv30"]) > 0 else 50.0
+    if iv30 is not None:
+        max_vol = max(max_vol, float(iv30) * 100)
+    y1_max = max(max_vol * 1.15, 10.0)
+
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=hist_plot.index, y=hist_plot["hv30"], name="30天 歷史波動率 (HV)", line=dict(color="#c084fc", width=2), yaxis="y1"))
     fig.add_trace(go.Scatter(x=hist_plot.index, y=hist_plot["close"], name="收盤價 (USD)", line=dict(color="#38bdf8", width=2), yaxis="y2"))
@@ -451,7 +476,12 @@ with tab_overview:
         template="plotly_dark",
         height=450,
         xaxis=dict(title="日期"),
-        yaxis=dict(title="波動率 (%)", title_font=dict(color="#c084fc"), tickfont=dict(color="#c084fc")),
+        yaxis=dict(
+            title="波動率 (%)",
+            title_font=dict(color="#c084fc"),
+            tickfont=dict(color="#c084fc"),
+            range=[0, y1_max],
+        ),
         yaxis2=dict(title="股價 (USD)", title_font=dict(color="#38bdf8"), tickfont=dict(color="#38bdf8"), overlaying="y", side="right"),
         legend=dict(x=0.01, y=0.99),
         margin=dict(t=30),

@@ -1,7 +1,9 @@
 import asyncio
+import json
 import math
 import os
 import re
+import urllib.request
 
 os.environ.setdefault("OPENBB_AUTO_BUILD", "false")
 
@@ -16,7 +18,12 @@ from openbb_core.app.model.obbject import OBBject
 from openbb_core.provider.abstract.annotated_result import AnnotatedResult
 from openbb_core.provider.utils.helpers import amake_request, run_async
 
-st.set_page_config(page_title="⚡ 美股波動率戰情室", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(
+    page_title="⚡ 美股波動率戰情室",
+    page_icon="⚡",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
 
 # 自訂樣式：精簡按鈕尺寸與垂直置中對齊，並優化指標數值自適應字體
 st.markdown("""
@@ -155,30 +162,22 @@ CHART_DAYS = 252           # 總覽圖表顯示近一年
 
 @st.cache_resource(show_spinner=False)
 def _install_cboe_directory_cache() -> bool:
-    """快取 openbb_cboe 的公司與指數名錄，避免每次查詢重複下載大型清單導致逾時。"""
+    """快取 openbb_cboe 的指數名錄並加速期權鏈查詢，避免每次查詢重複下載大型清單導致逾時。"""
     import openbb_cboe.utils.helpers as cboe_helpers
 
-    orig_company_dir = cboe_helpers.get_company_directory
     orig_index_dir = cboe_helpers.get_index_directory
-    mem_cache: dict[str, pd.DataFrame] = {}
+    mem_cache: dict[str, pd.DataFrame] = {
+        "company": pd.DataFrame(columns=["dpm_name", "post_station", "name"]).rename_axis("symbol")
+    }
 
     async def cached_company_dir(use_cache: bool = True, **kwargs) -> pd.DataFrame:
-        if "company" not in mem_cache:
-            try:
-                mem_cache["company"] = await asyncio.wait_for(
-                    orig_company_dir(use_cache=False, **kwargs), timeout=4.0
-                )
-            except Exception:
-                mem_cache["company"] = pd.DataFrame(
-                    columns=["dpm_name", "post_station", "name"]
-                ).rename_axis("symbol")
         return mem_cache["company"]
 
     async def cached_index_dir(use_cache: bool = True, **kwargs) -> pd.DataFrame:
         if "index" not in mem_cache:
             try:
                 mem_cache["index"] = await asyncio.wait_for(
-                    orig_index_dir(use_cache=False, **kwargs), timeout=4.0
+                    orig_index_dir(use_cache=False, **kwargs), timeout=3.0
                 )
             except Exception:
                 mem_cache["index"] = pd.DataFrame(columns=["index_symbol", "name", "source"])
@@ -346,10 +345,50 @@ KNOWN_COMPANY_NAMES = {
     "SMCI": "Super Micro Computer, Inc.",
     "PLTR": "Palantir Technologies Inc.",
     "BABA": "Alibaba Group Holding Ltd.",
+    "C": "Citigroup Inc. (Citi)",
+    "V": "Visa Inc.",
+    "MA": "Mastercard Incorporated",
+    "JPM": "JPMorgan Chase & Co.",
+    "BAC": "Bank of America Corporation",
+    "WFC": "Wells Fargo & Company",
+    "GS": "The Goldman Sachs Group, Inc.",
+    "MS": "Morgan Stanley",
+    "AXP": "American Express Company",
+    "NFLX": "Netflix, Inc.",
+    "COST": "Costco Wholesale Corporation",
+    "WMT": "Walmart Inc.",
+    "DIS": "The Walt Disney Company",
+    "LLY": "Eli Lilly and Company",
+    "UNH": "UnitedHealth Group Incorporated",
+    "ORCL": "Oracle Corporation",
+    "CRM": "Salesforce, Inc.",
+    "UBER": "Uber Technologies, Inc.",
+    "COIN": "Coinbase Global, Inc.",
+    "MSTR": "Strategy Inc. (MicroStrategy)",
     "QQQ": "Invesco QQQ Trust (ETF)",
     "SPY": "SPDR S&P 500 ETF Trust",
     "SOXX": "iShares Semiconductor ETF",
+    "SMH": "VanEck Semiconductor ETF",
+    "IWM": "iShares Russell 2000 ETF",
+    "TLT": "iShares 20+ Year Treasury Bond ETF",
 }
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def fetch_company_name(symbol: str) -> str | None:
+    """自動向 Yahoo Finance quoteType 端點查詢美股／ETF 官方正式公司名稱（快取 24 小時）。"""
+    if symbol in KNOWN_COMPANY_NAMES:
+        return KNOWN_COMPANY_NAMES[symbol]
+    try:
+        query_sym = symbol.replace(".", "-")
+        url = f"https://query2.finance.yahoo.com/v1/finance/quoteType/?symbol={query_sym}"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            res = (data.get("quoteType", {}).get("result") or [{}])[0]
+            return res.get("longName") or res.get("shortName")
+    except Exception:
+        return None
 
 
 def clean_company_name(raw_name: str | None, symbol: str) -> str:
@@ -359,6 +398,7 @@ def clean_company_name(raw_name: str | None, symbol: str) -> str:
     if not raw_name or str(raw_name).strip().upper() == symbol:
         return symbol
     s = str(raw_name).strip()
+    is_all_caps = s.isupper()
     s = re.sub(r"\bCOM\s+INC\s+COM\b", "Inc.", s, flags=re.I)
     s = re.sub(r"\bINC\s+COM\b", "Inc.", s, flags=re.I)
     s = re.sub(r"\bCORP\s+COM\b", "Corp.", s, flags=re.I)
@@ -369,10 +409,12 @@ def clean_company_name(raw_name: str | None, symbol: str) -> str:
     s = re.sub(r"\bCommon\s+Stock\b", "", s, flags=re.I)
     s = re.sub(r"\bClass\s+[A-Z]\b", "", s, flags=re.I)
     s = re.sub(r"\s+COM$", "", s, flags=re.I)
-    s = re.sub(r"\s+", " ", s).strip()
+    s = re.sub(r"\s+", " ", s).strip(" ,-")
+    if not is_all_caps:
+        return s
     words = s.split()
     cleaned = []
-    acronyms = {"ADR", "ETF", "USA", "PLC", "LLC", "LP", "REIT", "AI", "TSMC"}
+    acronyms = {"ADR", "ETF", "USA", "PLC", "LLC", "LP", "REIT", "AI", "TSMC", "AMD", "IBM"}
     for w in words:
         w_clean = re.sub(r"[^\w.]", "", w)
         if w_clean.upper() in acronyms:
@@ -438,7 +480,11 @@ iv_rank = None
 if iv30 is not None and iv30_low is not None and iv30_high is not None and iv30_high > iv30_low:
     iv_rank = min(max((iv30 - iv30_low) / (iv30_high - iv30_low) * 100, 0.0), 100.0)
 
-raw_name = q["name"].iloc[0] if "name" in q.columns and len(q) > 0 and pd.notna(q["name"].iloc[0]) else None
+raw_name = (
+    q["name"].iloc[0]
+    if "name" in q.columns and len(q) > 0 and pd.notna(q["name"].iloc[0])
+    else None
+) or fetch_company_name(ticker)
 company_header = format_company_header(raw_name, ticker)
 
 st.divider()

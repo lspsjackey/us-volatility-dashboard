@@ -1,11 +1,20 @@
+import asyncio
 import math
+import os
 import re
+
+os.environ.setdefault("OPENBB_AUTO_BUILD", "false")
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from openbb import obb
+from openbb_cboe.models.equity_historical import CboeEquityHistoricalFetcher
+from openbb_cboe.models.equity_quote import CboeEquityQuoteFetcher
+from openbb_cboe.models.options_chains import CboeOptionsChainsFetcher
+from openbb_core.app.model.obbject import OBBject
+from openbb_core.provider.abstract.annotated_result import AnnotatedResult
+from openbb_core.provider.utils.helpers import amake_request, run_async
 
 st.set_page_config(page_title="⚡ 美股波動率戰情室", layout="wide", initial_sidebar_state="collapsed")
 
@@ -156,38 +165,65 @@ def _install_cboe_directory_cache() -> bool:
     async def cached_company_dir(use_cache: bool = True, **kwargs) -> pd.DataFrame:
         if "company" not in mem_cache:
             try:
-                mem_cache["company"] = await orig_company_dir(use_cache=False, **kwargs)
+                mem_cache["company"] = await asyncio.wait_for(
+                    orig_company_dir(use_cache=False, **kwargs), timeout=4.0
+                )
             except Exception:
-                return pd.DataFrame(columns=["dpm_name", "post_station", "name"]).rename_axis("symbol")
+                mem_cache["company"] = pd.DataFrame(
+                    columns=["dpm_name", "post_station", "name"]
+                ).rename_axis("symbol")
         return mem_cache["company"]
 
     async def cached_index_dir(use_cache: bool = True, **kwargs) -> pd.DataFrame:
         if "index" not in mem_cache:
             try:
-                mem_cache["index"] = await orig_index_dir(use_cache=False, **kwargs)
+                mem_cache["index"] = await asyncio.wait_for(
+                    orig_index_dir(use_cache=False, **kwargs), timeout=4.0
+                )
             except Exception:
-                return pd.DataFrame(columns=["index_symbol", "name", "source"])
+                mem_cache["index"] = pd.DataFrame(columns=["index_symbol", "name", "source"])
         return mem_cache["index"]
+
+    async def fast_chains_aextract(query, credentials, **kwargs):
+        symbol = query.symbol.replace("^", "").split(",")[0].upper()
+        indexes = await cached_index_dir(use_cache=False)
+        idx_set = set(indexes["index_symbol"]) if "index_symbol" in indexes.columns else set()
+        url = (
+            f"https://cdn.cboe.com/api/global/delayed_quotes/options/_{symbol}.json"
+            if symbol in cboe_helpers.TICKER_EXCEPTIONS or symbol in idx_set
+            else f"https://cdn.cboe.com/api/global/delayed_quotes/options/{symbol}.json"
+        )
+        return await amake_request(url)
 
     cboe_helpers.get_company_directory = cached_company_dir
     cboe_helpers.get_index_directory = cached_index_dir
+    CboeOptionsChainsFetcher.aextract_data = staticmethod(fast_chains_aextract)
+    CboeOptionsChainsFetcher.extract_data = staticmethod(fast_chains_aextract)
     return True
 
 
 _install_cboe_directory_cache()
 
 
+def _fetch_cboe_df(fetcher_cls, **params) -> pd.DataFrame:
+    """直接呼叫 openbb_cboe Fetcher 並轉為 DataFrame，不經過 openbb.__init__ 的唯讀目錄建置。"""
+    res = run_async(fetcher_cls.fetch_data, params, {})
+    if isinstance(res, AnnotatedResult):
+        return OBBject(results=res.result, extra={"results_metadata": res.metadata}).to_dataframe()
+    return OBBject(results=res).to_dataframe()
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def load_quote(symbol: str) -> pd.DataFrame:
-    return obb.equity.price.quote(symbol=symbol, provider="cboe", use_cache=False).to_dataframe()
+    return _fetch_cboe_df(CboeEquityQuoteFetcher, symbol=symbol, use_cache=False)
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_history(symbol: str) -> pd.DataFrame:
     start = (pd.Timestamp.today() - pd.DateOffset(years=HISTORY_YEARS)).strftime("%Y-%m-%d")
-    df = obb.equity.price.historical(
-        symbol=symbol, provider="cboe", start_date=start, use_cache=False
-    ).to_dataframe()
+    df = _fetch_cboe_df(
+        CboeEquityHistoricalFetcher, symbol=symbol, start_date=start, use_cache=False
+    )
     df.index = pd.to_datetime(df.index)
     df["close"] = pd.to_numeric(df["close"], errors="coerce")
     df = df.dropna(subset=["close"]).sort_index()
@@ -197,7 +233,7 @@ def load_history(symbol: str) -> pd.DataFrame:
 
 @st.cache_data(ttl=600, show_spinner=False)
 def load_chain(symbol: str) -> pd.DataFrame:
-    df = obb.cboe.options.chains(symbol=symbol, use_cache=False).to_dataframe()
+    df = _fetch_cboe_df(CboeOptionsChainsFetcher, symbol=symbol, use_cache=False)
     for col in ["strike", "implied_volatility", "bid", "ask", "delta", "dte", "underlying_price"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")

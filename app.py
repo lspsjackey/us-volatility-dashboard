@@ -1,4 +1,5 @@
 import math
+import re
 
 import streamlit as st
 import pandas as pd
@@ -123,7 +124,7 @@ with st.form("search_form", clear_on_submit=False):
         ticker = st.text_input(
             "ticker_input",
             value="",
-            placeholder="例如：MU, NVDA, TSM, COHR, AAPL, QQQ",
+            placeholder="例如：NVDA, TSM",
             label_visibility="collapsed"
         ).strip().upper()
     with col_btn:
@@ -282,11 +283,75 @@ def iv_rank_label(rank: float) -> str:
     return "位於一年區間中段"
 
 
+# 熱門標的標準化對照表（確保知名公司呈現整潔專業名稱）
+KNOWN_COMPANY_NAMES = {
+    "NVDA": "NVIDIA Corporation",
+    "TSM": "Taiwan Semiconductor (台積電)",
+    "AAPL": "Apple Inc.",
+    "AMZN": "Amazon.com, Inc.",
+    "MSFT": "Microsoft Corporation",
+    "GOOGL": "Alphabet Inc. (Google)",
+    "GOOG": "Alphabet Inc. (Google)",
+    "META": "Meta Platforms, Inc.",
+    "MU": "Micron Technology, Inc.",
+    "COHR": "Coherent Corp.",
+    "AMD": "Advanced Micro Devices, Inc.",
+    "INTC": "Intel Corporation",
+    "AVGO": "Broadcom Inc.",
+    "QCOM": "Qualcomm Inc.",
+    "TSLA": "Tesla, Inc.",
+    "ASML": "ASML Holding",
+    "ARM": "Arm Holdings plc",
+    "SMCI": "Super Micro Computer, Inc.",
+    "PLTR": "Palantir Technologies Inc.",
+    "BABA": "Alibaba Group Holding Ltd.",
+    "QQQ": "Invesco QQQ Trust (ETF)",
+    "SPY": "SPDR S&P 500 ETF Trust",
+    "SOXX": "iShares Semiconductor ETF",
+}
+
+
+def clean_company_name(raw_name: str | None, symbol: str) -> str:
+    """清理交易所回傳之公司名稱（去除 COM、INC COM、SPONSORED ADS 等贅詞並標準化大小寫）。"""
+    if symbol in KNOWN_COMPANY_NAMES:
+        return KNOWN_COMPANY_NAMES[symbol]
+    if not raw_name or str(raw_name).strip().upper() == symbol:
+        return symbol
+    s = str(raw_name).strip()
+    s = re.sub(r"\bCOM\s+INC\s+COM\b", "Inc.", s, flags=re.I)
+    s = re.sub(r"\bINC\s+COM\b", "Inc.", s, flags=re.I)
+    s = re.sub(r"\bCORP\s+COM\b", "Corp.", s, flags=re.I)
+    s = re.sub(r"\bCO\s+COM\b", "Co.", s, flags=re.I)
+    s = re.sub(r"\bSPONSORED\s+ADS\b", "ADR", s, flags=re.I)
+    s = re.sub(r"\bSPON\s+ADR\b", "ADR", s, flags=re.I)
+    s = re.sub(r"\s+COM$", "", s, flags=re.I)
+    words = s.split()
+    cleaned = []
+    acronyms = {"ADR", "ETF", "USA", "PLC", "LLC", "LP", "REIT", "AI", "TSMC"}
+    for w in words:
+        w_clean = re.sub(r"[^\w.]", "", w)
+        if w_clean.upper() in acronyms:
+            cleaned.append(w.upper())
+        elif "." in w:
+            cleaned.append(".".join(part.capitalize() for part in w.split(".")))
+        else:
+            cleaned.append(w.capitalize())
+    return " ".join(cleaned)
+
+
+def format_company_header(raw_name: str | None, symbol: str) -> str:
+    """生成乾淨一致的公司標題，避免出現 NVDA（NVDA）等重複代號情況。"""
+    clean = clean_company_name(raw_name, symbol)
+    if clean.upper() == symbol.upper():
+        return symbol
+    return f"{clean}（{symbol}）"
+
+
 # ============================================================
 # 3. 狀態判斷與數據分析
 # ============================================================
 if not ticker:
-    st.info("💡 請在上方輸入框鍵入美股或 ETF 代號（如 NVDA、TSM、COHR），按 Enter 或點擊「開始分析」即可即時產出報表。")
+    st.info("💡 請在上方輸入框鍵入美股或 ETF 代號（如 NVDA、TSM），按 Enter 或點擊「開始分析」即可即時產出報表。")
     st.stop()
 
 try:
@@ -318,10 +383,11 @@ iv_rank = None
 if iv30 is not None and iv30_low is not None and iv30_high is not None and iv30_high > iv30_low:
     iv_rank = min(max((iv30 - iv30_low) / (iv30_high - iv30_low) * 100, 0.0), 100.0)
 
-company_name = q["name"].iloc[0] if "name" in q.columns and len(q) > 0 else ticker
+raw_name = q["name"].iloc[0] if "name" in q.columns and len(q) > 0 and pd.notna(q["name"].iloc[0]) else None
+company_header = format_company_header(raw_name, ticker)
 
 st.divider()
-st.subheader(f"{company_name}（{ticker}）")
+st.subheader(company_header)
 
 c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric(

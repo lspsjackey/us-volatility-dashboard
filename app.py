@@ -112,7 +112,7 @@ $$\sigma_{\text{daily}} = \sqrt{\frac{1}{N - 1} \sum_{t=1}^{N} (r_t - \bar{r})^2
 ---
 
 ### 2️⃣ 30天 隱含波動率（30-Day Implied Volatility, $\text{IV}_{30}$）
-由 CBOE 根據未來約 30 天到期之平價（At-The-Money, ATM）與價外期權市場報價 $C_{\text{mkt}}, P_{\text{mkt}}$，代入期權定價模型反解出的年化波動率參數 $\sigma_{\text{imp}}$：
+由 CBOE 根據未來約 30 天到期之價平（At-The-Money, ATM）與價外期權市場報價 $C_{\text{mkt}}, P_{\text{mkt}}$，代入期權定價模型反解出的年化波動率參數 $\sigma_{\text{imp}}$：
 
 $$V_{\text{BSM}}(S, K, T, r, \sigma_{\text{imp}}) = V_{\text{market}}$$
 
@@ -641,14 +641,14 @@ with tab_term:
         st.plotly_chart(fig_ts, width="stretch")
         st.caption(
             f"黃色虛線為目前 FCN 模擬分頁所選天期（{tenor_months} 個月）。"
-            "橘色曲線高於紫色曲線，代表市場對下檔保護的定價高於平價期權（即賣權偏斜 Put Skew），FCN 賣出賣權所收取的權利金相對較高。"
+            "橘色曲線高於紫色曲線，代表市場對下檔保護的定價高於價平期權（即賣權偏斜 Put Skew），FCN 賣出賣權所收取的權利金相對較高。"
         )
 
 # ------------------------------------------------------------
 # 分頁 4：期權鏈（可切換到期日）
 # ------------------------------------------------------------
 with tab_chain:
-    st.markdown("#### 📋 平價周邊期權鏈")
+    st.markdown("#### 📋 價平周邊期權鏈")
     chain_valid = df_chains[df_chains["implied_volatility"] > 0].copy()
     if chain_valid.empty:
         st.info("此標的目前無有效期權報價。")

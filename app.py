@@ -7,7 +7,7 @@ import numpy as np
 import plotly.graph_objects as go
 from openbb import obb
 
-st.set_page_config(page_title="美股波動率與 FCN 分析戰情室", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="⚡ 美股波動率戰情室", layout="wide", initial_sidebar_state="collapsed")
 
 # 自訂樣式：精簡按鈕尺寸與垂直置中對齊
 st.markdown("""
@@ -21,11 +21,11 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 美股個股波動率與 FCN 期權戰情室")
+st.title("⚡ 美股波動率戰情室")
 st.write("即時查詢 CBOE 官方 30天 隱含波動率 (IV)、30天 歷史波動率 (HV) 與最新期權鏈。")
 
 # 1. FCN 結構與隱含波動率 (IV) 定價機制解說模組
-with st.expander("📖 什麼是FCN？", expanded=False):
+with st.expander("🎯 什麼是FCN？", expanded=False):
     st.markdown(
         """FCN（Fixed Coupon Note）在金融工程結構上，本質為「固定收益票券」與「賣出賣權（Short Put Option）」的組合商品。
 
@@ -61,7 +61,7 @@ with st.expander("📖 什麼是FCN？", expanded=False):
     )
 
 # 1-2. 30天 隱含波動率 (IV) 與 30天 歷史波動率 (HV) 指標解說模組
-with st.expander("📖 什麼是波動率", expanded=False):
+with st.expander("🌊 什麼是波動率？", expanded=False):
     tab_vol_plain, tab_vol_academic = st.tabs(["💡 實戰判讀", "📘 數學定義"])
 
     with tab_vol_plain:

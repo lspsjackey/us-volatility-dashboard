@@ -18,9 +18,9 @@ st.markdown("""
         font-weight: 600;
         border-radius: 8px;
     }
-    /* 確保高波動率數字（如 > 100%）在卡片內不被省略號 ... 截斷 */
+    /* 確保高波動率數字（如 > 100%）在卡片內維持最大字體且不被省略號 ... 截斷 */
     div[data-testid="stMetricValue"] {
-        font-size: clamp(1.1rem, 1.45vw, 1.65rem) !important;
+        font-size: clamp(1.65rem, 2.0vw, 2.2rem) !important;
         white-space: nowrap !important;
     }
 </style>
@@ -408,7 +408,7 @@ company_header = format_company_header(raw_name, ticker)
 st.divider()
 st.subheader(company_header)
 
-c1, c2, c3, c4, c5 = st.columns(5)
+c1, c2, c3, c4, c5 = st.columns([1, 1, 1, 1.45, 0.85])
 c1.metric(
     "即時參考價",
     f"${price:,.2f}",
